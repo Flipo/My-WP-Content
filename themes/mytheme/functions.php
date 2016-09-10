@@ -111,6 +111,10 @@ function html5blank_header_scripts()
 // Load HTML5 Blank styles
 function html5blank_styles()
 {
+
+    wp_register_style('font', 'https://fonts.googleapis.com/css?family=Merriweather', array(), '1.0', 'all');
+    wp_enqueue_style('font'); // Enqueue it!
+
     wp_register_style('global', get_template_directory_uri() . '/css/global.css', array(), '1.0', 'all');
     wp_enqueue_style('global'); // Enqueue it!
 }
@@ -525,6 +529,28 @@ function add_theme_caps() {
    $editor = get_role('editor');
    $editor->add_cap('edit_dashboard');
 }
+
+// ACF Option Seite hinzufügen
+if( function_exists('acf_add_options_page') ) {
+
+    acf_add_options_page(array(
+        'page_title'    => 'Optionen',
+        'menu_title'    => 'Optionen',
+        'menu_slug'     => 'seiten-optionen',
+        'capability'    => 'edit_posts',
+        'redirect'      => false
+    ));
+
+}
+
+
+// ACF GOOGLE MAP
+function my_acf_init() {
+
+    acf_update_setting('google_api_key', 'AIzaSyBhWdmaTHRs1XGw2NYgBvMiJdStapQzXZI');
+}
+
+add_action('acf/init', 'my_acf_init');
 
 
 /*------------------------------------*\

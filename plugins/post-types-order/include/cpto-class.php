@@ -4,17 +4,72 @@
         {
             var $current_post_type = null;
             
-            function CPTO() 
+            function __construct() 
                 {
-                    add_action( 'admin_init', array(&$this, 'registerFiles'), 11 );
-                    add_action( 'admin_init', array(&$this, 'checkPost'), 10 );
-                    add_action( 'admin_menu', array(&$this, 'addMenu') );
+                    add_action( 'admin_init',                               array(&$this, 'registerFiles'), 11 );
+                    add_action( 'admin_init',                               array(&$this, 'checkPost'), 10 );
+                    add_action( 'admin_menu',                               array(&$this, 'addMenu') );
                     
+                    //load archive drag&drop sorting dependencies
+                    add_action( 'admin_enqueue_scripts',                    array(&$this, 'archiveDragDrop'), 10 );
                     
-                    
-                    add_action( 'wp_ajax_update-custom-type-order', array(&$this, 'saveAjaxOrder') );
+                    add_action( 'wp_ajax_update-custom-type-order',         array(&$this, 'saveAjaxOrder') );
+                    add_action( 'wp_ajax_update-custom-type-order-archive', array(&$this, 'saveArchiveAjaxOrder') );
                 }
 
+            
+            /**
+            * Load archive drag&drop sorting dependencies
+            * 
+            * Since version 1.8.8
+            */
+            function archiveDragDrop()
+                {
+                    $options          =     cpt_get_options();
+                    
+                    //if functionality turned off, continue
+                    if( $options['archive_drag_drop']   !=      '1')
+                        return;
+                    
+                    //if adminsort turned off no need to continue
+                    if( $options['adminsort']           !=      '1')
+                        return;
+                    
+                    $screen = get_current_screen();
+                        
+                    //check if the right interface
+                    if(!isset($screen->post_type)   ||  empty($screen->post_type))
+                        return;
+                        
+                    //check if post type is sortable
+                    if(isset($options['show_reorder_interfaces'][$screen->post_type]) && $options['show_reorder_interfaces'][$screen->post_type] != 'show')
+                        return;
+                    
+                    //if is taxonomy term filter return
+                    if(is_category()    ||  is_tax())
+                        return;
+                    
+                    //return if use orderby columns
+                    if (isset($_GET['orderby']) && $_GET['orderby'] !=  'menu_order')
+                        return false;
+                        
+                    //return if post status filtering
+                    if (isset($_GET['post_status']))
+                        return false;
+                        
+                    //return if post author filtering
+                    if (isset($_GET['author']))
+                        return false;
+                    
+                    //load required dependencies
+                    wp_enqueue_style('cpt-archive-dd', CPTURL . '/css/cpt-archive-dd.css');
+                    
+                    wp_enqueue_script('jquery');
+                    wp_enqueue_script('jquery-ui-sortable');
+                    wp_enqueue_script('cpt', CPTURL . '/js/cpt.js', array('jquery'));    
+                    
+                }    
+            
             function registerFiles() 
                 {
                     if ( $this->current_post_type != null ) 
@@ -39,8 +94,16 @@
                         }
                 }
             
+            
+            /**
+            * Save the order set through separate interface
+            * 
+            */
             function saveAjaxOrder() 
                 {
+                    
+                    set_time_limit(600);
+                    
                     global $wpdb;
                     
                     parse_str($_POST['order'], $data);
@@ -69,6 +132,70 @@
                                         }
                                 }
                         }
+                }
+                
+                
+            /**
+            * Save the order set throgh the Archive 
+            * 
+            */
+            function saveArchiveAjaxOrder()
+                {
+                    
+                    set_time_limit(600);
+                    
+                    global $wpdb;
+                    
+                    $post_type  =   filter_var ( $_POST['post_type'], FILTER_SANITIZE_STRING);
+                    $paged      =   filter_var ( $_POST['paged'], FILTER_SANITIZE_NUMBER_INT);
+                    parse_str($_POST['order'], $data);
+                    
+                    if (!is_array($data)    ||  count($data)    <   1)
+                        die();
+                    
+                    //retrieve a list of all objects
+                    $mysql_query    =   $wpdb->prepare("SELECT ID FROM ". $wpdb->posts ." 
+                                                            WHERE post_type = %s AND post_status IN ('publish', 'pending', 'draft', 'private', 'future')
+                                                            ORDER BY menu_order, post_date DESC", $post_type);
+                    $results        =   $wpdb->get_results($mysql_query);
+                    
+                    if (!is_array($results)    ||  count($results)    <   1)
+                        die();
+                    
+                    //create the list of ID's
+                    $objects_ids    =   array();
+                    foreach($results    as  $result)
+                        {
+                            $objects_ids[]  =   $result->ID;   
+                        }
+                    
+                    global $userdata;
+                    $objects_per_page   =   get_user_meta($userdata->ID ,'edit_post_per_page', TRUE);
+                    if(empty($objects_per_page))
+                        $objects_per_page   =   20;
+                    
+                    $edit_start_at      =   $paged  *   $objects_per_page   -   $objects_per_page;
+                    $index              =   0;
+                    for($i  =   $edit_start_at; $i  <   ($edit_start_at +   $objects_per_page); $i++)
+                        {
+                            if(!isset($objects_ids[$i]))
+                                break;
+                                
+                            $objects_ids[$i]    =   $data['post'][$index];
+                            $index++;
+                        }
+                    
+                    //update the menu_order within database
+                    foreach( $objects_ids as $menu_order   =>  $id ) 
+                        {
+                            $data = array(
+                                            'menu_order' => $menu_order
+                                            );
+                            $data = apply_filters('post-types-order_save-ajax-order', $data, $menu_order, $id);
+                            
+                            $wpdb->update( $wpdb->posts, $data, array('ID' => $id) );
+                        }
+                                    
                 }
             
 
@@ -114,12 +241,12 @@
                                 continue;
                             
                             if ($post_type_name == 'post')
-                                add_submenu_page('edit.php', __('Re-Order', 'cpt'), __('Re-Order', 'cpt'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') );
+                                add_submenu_page('edit.php', __('Re-Order', 'post-types-order'), __('Re-Order', 'post-types-order'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') );
                             elseif ($post_type_name == 'attachment') 
-                                add_submenu_page('upload.php', __('Re-Order', 'cpt'), __('Re-Order', 'cpt'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') ); 
+                                add_submenu_page('upload.php', __('Re-Order', 'post-types-order'), __('Re-Order', 'post-types-order'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') ); 
                             else
                                 {
-                                    add_submenu_page('edit.php?post_type='.$post_type_name, __('Re-Order', 'cpt'), __('Re-Order', 'cpt'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') );    
+                                    add_submenu_page('edit.php?post_type='.$post_type_name, __('Re-Order', 'post-types-order'), __('Re-Order', 'post-types-order'), $capability, 'order-post-types-'.$post_type_name, array(&$this, 'SortPage') );    
                                 }
                         }
                 }
@@ -128,9 +255,9 @@
             function SortPage() 
                 {
                     ?>
-                    <div class="wrap">
+                    <div id="cpto" class="wrap">
                         <div class="icon32" id="icon-edit"><br></div>
-                        <h2><?php echo $this->current_post_type->labels->singular_name . ' -  '. __('Re-Order', 'cpt') ?></h2>
+                        <h2><?php echo $this->current_post_type->labels->singular_name . ' -  '. __('Re-Order', 'post-types-order') ?></h2>
 
                         <?php cpt_info_box(); ?>  
                         
@@ -138,7 +265,7 @@
                         
                         <noscript>
                             <div class="error message">
-                                <p><?php _e('This plugin can\'t work without javascript, because it\'s use drag and drop and AJAX.', 'cpt') ?></p>
+                                <p><?php _e('This plugin can\'t work without javascript, because it\'s use drag and drop and AJAX.', 'post-types-order') ?></p>
                             </div>
                         </noscript>
                         
@@ -151,7 +278,7 @@
                         </div>
                         
                         <p class="submit">
-                            <a href="javascript: void(0)" id="save-order" class="button-primary"><?php _e('Update', 'cpt' ) ?></a>
+                            <a href="javascript: void(0)" id="save-order" class="button-primary"><?php _e('Update', 'post-types-order' ) ?></a>
                         </p>
                         
                         <script type="text/javascript">
@@ -170,7 +297,7 @@
                                     jQuery("html, body").animate({ scrollTop: 0 }, "fast");
                                     
                                     jQuery.post( ajaxurl, { action:'update-custom-type-order', order:jQuery("#sortable").sortable("serialize") }, function() {
-                                        jQuery("#ajax-response").html('<div class="message updated fade"><p><?php _e('Items Order Updated', 'cpt') ?></p></div>');
+                                        jQuery("#ajax-response").html('<div class="message updated fade"><p><?php _e('Items Order Updated', 'post-types-order') ?></p></div>');
                                         jQuery("#ajax-response div").delay(3000).hide("slow");
                                     });
                                 });

@@ -1,15 +1,17 @@
-<?php namespace NestedPages\Entities\PostType;
+<?php 
+
+namespace NestedPages\Entities\PostType;
 
 /**
 * Post Types required by Nested Pages
 */
-class RegisterPostTypes {
+class RegisterPostTypes 
+{
 
 	public function __construct()
 	{
 		add_action( 'init', array( $this, 'registerRedirects') );
 	}
-
 
 	/**
 	* Redirects Post Type
@@ -32,6 +34,7 @@ class RegisterPostTypes {
 			'hierarchical' => true,  
 			'has_archive' => false,
 			'supports' => array('title','editor'),
+			'_edit_link' => 'post.php?post=%d',
 			'rewrite' => array('slug' => 'np-redirect', 'with_front' => false)
 		);
 		register_post_type( 'np-redirect' , $args );

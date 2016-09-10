@@ -22,8 +22,6 @@
 	</head>
 	<body <?php body_class(); ?>>
 
-		<div class="wrapper">
-
 			<header class="header clear" role="banner">
 
 					<!-- logo -->

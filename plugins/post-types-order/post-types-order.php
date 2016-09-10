@@ -5,7 +5,9 @@ Plugin URI: http://www.nsp-code.com
 Description: Posts Order and Post Types Objects Order using a Drag and Drop Sortable javascript capability
 Author: Nsp Code
 Author URI: http://www.nsp-code.com 
-Version: 1.8.4.1
+Version: 1.8.9.2
+Text Domain: post-types-order
+Domain Path: /languages/
 */
 
     define('CPTPATH',   plugin_dir_path(__FILE__));
@@ -40,12 +42,20 @@ Version: 1.8.4.1
                 { return $query; }  // Stop running the function if this is a virtual page
             //--
                
-            $options          =     cpt_get_options();
+            //no need if it's admin interface
             if (is_admin())
-                {
-                    //no need if it's admin interface
-                    return false;   
-                }
+                return $query;
+            
+            //check for ignore_custom_sort
+            if (isset($query->query_vars['ignore_custom_sort']) && $query->query_vars['ignore_custom_sort'] === TRUE)
+                return $query; 
+            
+            //ignore if  "nav_menu_item"
+            if(isset($query->query_vars)    &&  isset($query->query_vars['post_type'])   && $query->query_vars['post_type'] ==  "nav_menu_item")
+                return $query;    
+                
+            $options          =     cpt_get_options();
+            
             //if auto sort    
             if ($options['autosort'] == "1")
                 {
@@ -69,6 +79,10 @@ Version: 1.8.4.1
             
             $options          =     cpt_get_options();
             
+            //check for ignore_custom_sort
+            if (isset($query->query_vars['ignore_custom_sort']) && $query->query_vars['ignore_custom_sort'] === TRUE)
+                return $orderBy;  
+            
             //ignore the bbpress
             if (isset($query->query_vars['post_type']) && ((is_array($query->query_vars['post_type']) && in_array("reply", $query->query_vars['post_type'])) || ($query->query_vars['post_type'] == "reply")))
                 return $orderBy;
@@ -77,6 +91,10 @@ Version: 1.8.4.1
                 
             //check for orderby GET paramether in which case return default data
             if (isset($_GET['orderby']) && $_GET['orderby'] !=  'menu_order')
+                return $orderBy;
+            
+            //check to ignore
+            if(apply_filters('pto/posts_orderby', $orderBy, $query) === FALSE)
                 return $orderBy;
             
             if (is_admin())
@@ -92,9 +110,12 @@ Version: 1.8.4.1
                                 
                                 //temporary ignore ACF group and admin ajax calls, should be fixed within ACF plugin sometime later
                                 if (is_object($post) && $post->post_type    ==  "acf-field-group"
-                                        ||  (defined('DOING_AJAX') && isset($_REQUEST['action']) && strpos($_REQUEST['action'], 'acf/') < 1))
+                                        ||  (defined('DOING_AJAX') && isset($_REQUEST['action']) && strpos($_REQUEST['action'], 'acf/') === 0))
                                     return $orderBy;
                                     
+                                if(isset($_POST['query'])   &&  isset($_POST['query']['post__in'])  &&  is_array($_POST['query']['post__in'])   &&  count($_POST['query']['post__in'])  >   0)
+                                    return $orderBy;   
+                                
                                 $orderBy = "{$wpdb->posts}.menu_order, {$wpdb->posts}.post_date DESC";
                             }
                     }
@@ -126,7 +147,7 @@ Version: 1.8.4.1
                 return;
             ?>
                 <div class="error fade">
-                    <p><strong><?php _e('Post Types Order must be configured. Please go to', 'cpt') ?> <a href="<?php echo get_admin_url() ?>options-general.php?page=cpto-options"><?php _e('Settings Page', 'cpt') ?></a> <?php _e('make the configuration and save', 'cpt') ?></strong></p>
+                    <p><strong><?php _e('Post Types Order must be configured. Please go to', 'post-types-order') ?> <a href="<?php echo get_admin_url() ?>options-general.php?page=cpto-options"><?php _e('Settings Page', 'post-types-order') ?></a> <?php _e('make the configuration and save', 'post-types-order') ?></strong></p>
                 </div>
             <?php
         }
@@ -135,7 +156,7 @@ Version: 1.8.4.1
     add_action( 'plugins_loaded', 'cpto_load_textdomain'); 
     function cpto_load_textdomain() 
         {
-            load_plugin_textdomain('cpt', FALSE, dirname( plugin_basename( __FILE__ ) ) . '/lang');
+            load_plugin_textdomain('post-types-order', FALSE, dirname( plugin_basename( __FILE__ ) ) . '/languages');
         }
       
     add_action('admin_menu', 'cpto_plugin_menu'); 
@@ -248,14 +269,14 @@ Version: 1.8.4.1
                 
             $current_menu_order = $post->menu_order;
             
-            $query = "SELECT p.* FROM $wpdb->posts AS p
+            $query = $wpdb->prepare( "SELECT p.* FROM $wpdb->posts AS p
                         $_join
-                        WHERE p.post_date < '". $post->post_date ."'  AND p.menu_order = '".$current_menu_order."' AND p.post_type = '". $post->post_type ."' AND p.post_status = 'publish' $_where";
+                        WHERE p.post_date < %s  AND p.menu_order = %d AND p.post_type = %s AND p.post_status = 'publish' $_where" ,  $post->post_date, $current_menu_order, $post->post_type);
             $results = $wpdb->get_results($query);
                     
             if (count($results) > 0)
                     {
-                        $where .= " AND p.menu_order = '".$current_menu_order."'";
+                        $where .= $wpdb->prepare( " AND p.menu_order = %d", $current_menu_order );
                     }
                 else
                     {
@@ -328,14 +349,14 @@ Version: 1.8.4.1
             $current_menu_order = $post->menu_order;
             
             //check if there are more posts with lower menu_order
-            $query = "SELECT p.* FROM $wpdb->posts AS p
+            $query = $wpdb->prepare( "SELECT p.* FROM $wpdb->posts AS p
                         $_join
-                        WHERE p.post_date > '". $post->post_date ."' AND p.menu_order = '".$current_menu_order."' AND p.post_type = '". $post->post_type ."' AND p.post_status = 'publish' $_where";
+                        WHERE p.post_date > %s AND p.menu_order = %d AND p.post_type = %s AND p.post_status = 'publish' $_where", $post->post_date, $current_menu_order, $post->post_type );
             $results = $wpdb->get_results($query);
                     
             if (count($results) > 0)
                     {
-                        $where .= " AND p.menu_order = '".$current_menu_order."'";
+                        $where .= $wpdb->prepare(" AND p.menu_order = %d", $current_menu_order );
                     }
                 else
                     {
